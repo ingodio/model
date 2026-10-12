@@ -181,10 +181,16 @@ def convert_math(soup):
         else:
             replacement = f"${latex}$"
 
-        # Replace the entire rendered math container, not just <math>.
+        # Prefer replacing the entire KaTeX rendering.
         container = math.find_parent(
-            "div", attrs={"data-d-component": "math"}
+            "span", class_="katex"
         )
+
+        # Support other rendered math containers, if present.
+        if not container:
+            container = math.find_parent(
+                "div", attrs={"data-d-component": "math"}
+            )
 
         if container:
             container.replace_with(NavigableString(replacement))
