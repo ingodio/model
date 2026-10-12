@@ -634,7 +634,7 @@ def convert_code_blocks(soup):
 
     # Handle HTML code components first.
     for section in reversed(
-        soup.select('section[data-conversation-component="html-code"]')
+        soup.select('[data-conversation-component="html-code"]')
     ):
         if section.parent is None:
             continue
@@ -643,13 +643,17 @@ def convert_code_blocks(soup):
         language = ""
 
         if header is not None:
-            # The first span in the header contains the language label.
-            language_span = header.find("span", recursive=False)
+            first_span = header.find("span", recursive=False)
+            if first_span is not None:
+                # Get only the direct label text, excluding nested UI.
+                language = "".join(
+                    str(child)
+                    for child in first_span.children
+                    if isinstance(child, str)
+                ).strip().lower()
 
-            if language_span is not None:
-                language = language_span.get_text(strip=True).lower()
-
-        code = section.select_one("pre code")
+        # Extract only the code, never the section's full text.
+        code = section.select_one("pre > code")
 
         if code is None:
             continue
