@@ -81,9 +81,6 @@ def inline_markdown(element):
     This recursively preserves inline formatting such as:
         <strong>...</strong>
         <em>...</em>
-        <a href="...">...</a>
-        <code>...</code>
-        <br>
     """
     if isinstance(element, NavigableString):
         return str(element)
@@ -121,6 +118,19 @@ def inline_markdown(element):
 #            return f"**{content}**"
 
 #        return content
+
+    if tag == "span":
+        if (
+            element.get("data-d-component") == "text"
+            and element.has_attr("data-d-inline")
+            and "--x-color: var(--d-link-hover-color, var(--d-inherited-text-color, inherit));"
+            in element.get("style", "")
+        ):
+            content = "".join(
+                inline_markdown(child)
+                for child in element.children
+            )
+            return f"**{content}**"
 
     if tag == "a":
         content = "".join(
@@ -193,19 +203,15 @@ def convert_math(soup):
             )
 
         if container:
-            # Remove duplicate plain text immediately following the math.
-            sibling = container.next_sibling
-            if isinstance(sibling, NavigableString):
-                duplicate = latex.replace(" ", "")
-                text = str(sibling)
+            # Remove the rendered HTML to avoid duplicate math text.
+#            katex_html = container.select_one(".katex-html")
+#            if katex_html:
+#                katex_html.decompose()
 
-                if text.lstrip().startswith(duplicate):
-                    sibling.replace_with(
-                        text[:len(text) - len(text.lstrip())]
-                        + text.lstrip()[len(duplicate):]
-                    )
+            container.replace_with(
+                NavigableString(replacement)
+            )
 
-            container.replace_with(NavigableString(replacement))
         else:
             math.replace_with(NavigableString(replacement))
 
