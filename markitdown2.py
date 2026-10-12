@@ -193,6 +193,18 @@ def convert_math(soup):
             )
 
         if container:
+            # Remove duplicate plain text immediately following the math.
+            sibling = container.next_sibling
+            if isinstance(sibling, NavigableString):
+                duplicate = latex.replace(" ", "")
+                text = str(sibling)
+
+                if text.lstrip().startswith(duplicate):
+                    sibling.replace_with(
+                        text[:len(text) - len(text.lstrip())]
+                        + text.lstrip()[len(duplicate):]
+                    )
+
             container.replace_with(NavigableString(replacement))
         else:
             math.replace_with(NavigableString(replacement))
