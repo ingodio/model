@@ -81,6 +81,9 @@ def inline_markdown(element):
     This recursively preserves inline formatting such as:
         <strong>...</strong>
         <em>...</em>
+        <a href="...">...</a>
+        <code>...</code>
+        <br>
     """
     if isinstance(element, NavigableString):
         return str(element)
@@ -658,7 +661,10 @@ def convert_code_blocks(soup):
 
     # Handle HTML code components first.
     for section in reversed(
-        soup.select('[data-conversation-component="html-code"]')
+        soup.select(
+'[data-conversation-component="html-code"], '
+'[data-assistant-writing-block]'
+    )
     ):
         if section.parent is None:
             continue
@@ -675,6 +681,8 @@ def convert_code_blocks(soup):
                     for child in first_span.children
                     if isinstance(child, str)
                 ).strip().lower()
+            else:
+                 language = "".join("txt")
 
         # Extract only the code, never the section's full text.
         code = section.select_one("pre > code")
