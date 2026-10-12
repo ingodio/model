@@ -545,7 +545,7 @@ def convert_code_blocks(soup):
         - virtualized code editors using the structure:
             <div aria-label="Code Preview">
                 <div tabindex="-1">
-                    <div data-testid="one-code-identity">
+                    <div data-testid="one-copilot-code-identity">
                         <svg>...</svg>
                         <span>C++</span>
                     </div>
@@ -576,6 +576,10 @@ def convert_code_blocks(soup):
         ```python
         print("hello")
         ```
+
+    Handles:
+      - HTML code components:
+        <section data-conversation-component="html-code">...</section>
     """
     def get_fence(content):
         max_backticks = 0
@@ -586,7 +590,7 @@ def convert_code_blocks(soup):
                 current += 1
                 max_backticks = max(
                     max_backticks,
-                    current,
+                    current
                 )
             else:
                 current = 0
@@ -628,10 +632,32 @@ def convert_code_blocks(soup):
 
         return ""
 
-    # ---------------------------------------------------------------
-    # Standard <pre> blocks
-    # ---------------------------------------------------------------
+    # Handle HTML code components first.
+    for section in reversed(
+        soup.select('section[data-conversation-component="html-code"]')
+    ):
+        if section.parent is None:
+            continue
 
+        header = section.find("div", recursive=False)
+        language = ""
+
+        if header is not None:
+            # The first span in the header contains the language label.
+            language_span = header.find("span", recursive=False)
+
+            if language_span is not None:
+                language = language_span.get_text(strip=True).lower()
+
+        code = section.select_one("pre code")
+
+        if code is None:
+            continue
+
+        content = code.get_text()
+        section.replace_with(to_markdown(content, language))
+
+    # Handle standard <pre> blocks.
     for pre in reversed(soup.find_all("pre")):
         if pre.parent is None:
             continue
@@ -749,7 +775,6 @@ def convert_horizontal_rules(soup):
     """Convert <hr> to Markdown horizontal rules."""
     for hr in soup.find_all("hr"):
         hr.replace_with("\n---\n")
-
 
 def clean_output(text):
     """
