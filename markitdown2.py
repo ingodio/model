@@ -1,74 +1,20 @@
 import json, sys, re
 from bs4 import BeautifulSoup, NavigableString, Tag, Comment
 
-def render_list_item_content(li):
-    """Render the non-list content of an <li>.
-
-    Inline content is kept together on the same line.
-    Block-level content such as fenced code blocks is separated.
-    """
-    parts = []
-    inline_parts = []
-
-    def flush_inline():
-        if inline_parts:
-            content = "".join(inline_parts).strip()
-            if content:
-                parts.append(content)
-            inline_parts.clear()
-
-    for child in li.children:
-        if isinstance(child, Tag):
-            if child.name in ("ul", "ol"):
-                continue
-
-            if child.name == "pre":
-                flush_inline()
-
-                code = child.find("code")
-
-                if code:
-                    content = code.get_text()
-                    language = ""
-
-                    for class_name in code.get("class", []):
-                        if class_name.startswith("language-"):
-                            language = class_name[len("language-"):]
-                            break
-
-                    parts.append(
-                        f"```{language}\n"
-                        f"{content.rstrip(chr(10))}\n"
-                        f"```"
-                    )
-                else:
-                    parts.append(
-                        "```\n"
-                        + child.get_text().rstrip("\n")
-                        + "\n```"
-                    )
-
-            else:
-                # <code>, <strong>, <em>, <span>, <p>, etc.
-                inline_parts.append(inline_markdown(child))
-
-        elif isinstance(child, NavigableString):
-            # Preserve whitespace between inline elements, but ignore
-            # indentation/newlines around block content.
-#            if child.strip():
-#                inline_parts.append(str(child))
-            inline_parts.append(str(child))
-
-    flush_inline()
-
-    return "\n\n".join(parts)
-
 def clean_stream_markers(soup):
     """Remove streaming/commit marker comments."""
     for comment in soup.find_all(
         string=lambda text: isinstance(text, Comment)
     ):
         if re.fullmatch(r"[/a-z-]*", str(comment).strip()):
+            comment.extract()
+
+        text = str(comment).strip()
+        if (
+            text.startswith("?marker ")
+            or text.startswith("?start ")
+            or text.startswith("?end")
+        ):
             comment.extract()
 
 def strip_param(url):
@@ -317,7 +263,6 @@ def convert_tables(soup):
     for container in soup.select(
         "[data-assistant-markdown-table], "
         'div[data-d-component="table"], '
-        "c-gov-view-your-payments[c-govviewyourpaymentscontainer_govviewyourpaymentscontainer], "
 #        "div:has(> div > table)"
         "div > div:has(> table)"
     ):
@@ -400,14 +345,64 @@ def convert_tables(soup):
                 + "\n\n"
             )
 
+
+def render_list_item_content(li):
+    """Render an <li>'s text without including nested lists."""
+    parts = []
+    inline_parts = []
+
+    def flush_inline():
+        if inline_parts:
+            content = "".join(inline_parts).strip()
+            if content:
+                parts.append(content)
+            inline_parts.clear()
+
+    def render_without_lists(node):
+        if isinstance(node, NavigableString):
+            return str(node)
+
+        if not isinstance(node, Tag):
+            return ""
+
+        if node.name in ("ul", "ol"):
+            return ""
+
+        if node.name == "pre":
+            return (
+                "\n\n```\n"
+                + node.get_text().rstrip("\n")
+                + "\n```\n\n"
+            )
+
+        # Preserve inline formatting when the subtree has no lists.
+        if not node.find(["ul", "ol"]):
+            return inline_markdown(node)
+
+        # A wrapper contains a nested list: render its children
+        # individually, omitting the list but keeping surrounding text.
+        return "".join(
+            render_without_lists(child)
+            for child in node.children
+        )
+
+    for child in li.children:
+        rendered = render_without_lists(child)
+        if rendered:
+            inline_parts.append(rendered)
+
+    flush_inline()
+    return "\n\n".join(parts)
+
+
 def render_list(list_element, depth=0):
     """
     Recursively render <ul>/<ol> while preserving list type.
 
     Unordered lists use:
-        - at depth 0
+        * at depth 0
         + at depth 1
-        * at depth 2
+        - at depth 2
 
     Ordered lists use:
         1.
@@ -420,73 +415,48 @@ def render_list(list_element, depth=0):
     lines = []
     item_index = int(list_element.get("start", 1)) - 1
 
-    # Iterate over ALL direct children so that malformed-but-valid-in-
-    # BeautifulSoup HTML such as <ul><li>...</li><a>...</a></ul>
-    # doesn't lose the <a>.
     for child in list_element.find_all(recursive=False):
-
         if child.name == "li":
             item_index += 1
 
-            if ordered:
-                marker = f"{item_index}."
-            else:
-                marker = ["-", "+", "*"][depth % 3]
-
+            marker = (
+                f"{item_index}."
+                if ordered
+                else ["*", "+", "-"][depth % 3]
+            )
             indentation = "  " * depth
 
             text = render_list_item_content(child)
             text_lines = text.splitlines()
 
-            if not text_lines:
-                lines.append(
-                    f"{indentation}{marker}"
-                )
-            else:
-                # First line.
-                lines.append(
-                    f"{indentation}{marker} {text_lines[0]}"
-                )
-
-                # Subsequent lines belong to this list item.
-                continuation_indent = indentation + "  "
-
+            if text_lines:
+                lines.append(f"{indentation}{marker} {text_lines[0]}")
                 for line in text_lines[1:]:
-                    if line:
-                        lines.append(
-                            continuation_indent + line
-                        )
-                    else:
-                        lines.append("")
-
-            # Nested lists.
-            nested_lists = child.find_all(
-                ["ul", "ol"],
-                recursive=False,
-            )
-
-            for nested in nested_lists:
-                lines.extend(
-                    render_list(
-                        nested,
-                        depth=depth + 1,
+                    lines.append(
+                        f"{indentation}  {line}" if line else ""
                     )
-                )
+            else:
+                lines.append(f"{indentation}{marker}")
+
+            # Find nested lists anywhere inside wrapper elements,
+            # but do not descend into a nested list while searching.
+            def direct_nested_lists(item):
+                for node in item.children:
+                    if not isinstance(node, Tag):
+                        continue
+                    if node.name in ("ul", "ol"):
+                        yield node
+                    else:
+                        yield from direct_nested_lists(node)
+
+            for nested in direct_nested_lists(child):
+                lines.extend(render_list(nested, depth + 1))
 
         elif child.name in ("ul", "ol"):
-            # Handle a directly nested list if one exists.
-            lines.extend(
-                render_list(
-                    child,
-                    depth=depth + 1,
-                )
-            )
+            lines.extend(render_list(child, depth + 1))
 
         else:
-            # Preserve things such as:
-            # <a>...</a>
             text = inline_markdown(child).strip()
-
             if text:
                 lines.append(text)
 
@@ -519,7 +489,6 @@ def convert_lists(soup):
                 + "\n"
             )
         )
-
 
 def convert_blockquotes(soup):
     """Convert <blockquote>...</blockquote> to Markdown."""
